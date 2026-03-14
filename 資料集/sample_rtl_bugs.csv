@@ -1,0 +1,52 @@
+bug_id,bug_type,severity,buggy_snippet,fixed_snippet,description,fix_patch,verilog_ref,tool
+rtl_001,LATCH_INFERRED,WARNING,"always @(*) begin
+  if (sel == 2'b00) out = a;
+  else if (sel == 2'b01) out = b;
+end","always @(*) begin
+  case (sel)
+    2'b00: out = a;
+    2'b01: out = b;
+    default: out = '0;
+  endcase
+end",Incomplete if-else in combinational always block infers latch on out,Replace if-else with case statement and add default branch,mux.v:12,OpenROAD
+rtl_002,MULTIDRIVEN_NET,WARNING,"assign net_reset_sync = rst_gen_out;
+assign net_reset_sync = por_cell_rst;",assign net_reset_sync = rst_gen_out | por_cell_rst;,Two concurrent assign statements drive the same net causing contention,Merge drivers using OR gate into single assign statement,reset_ctrl.v:15,OpenROAD
+rtl_003,TIMING_VIOLATION,ERROR,"always @(posedge clk) begin
+  sum <= a + b + c + d + e + f;
+end","always @(posedge clk) begin
+  stage1 <= a + b;
+  stage2 <= c + d;
+  stage3 <= e + f;
+end
+always @(posedge clk) begin
+  sum <= stage1 + stage2 + stage3;
+end",Deep combinational path in single-cycle adder causes WNS violation,Pipeline the adder across two clock cycles using intermediate registers,adder.v:42,OpenROAD
+rtl_004,COMBINATIONAL_LOOP,ERROR,"assign grant = req & ~busy;
+assign busy  = grant & processing;","always @(posedge clk) begin
+  grant <= req & ~busy;
+end
+assign busy = grant & processing;",Combinational feedback loop: req->grant->busy->grant,Register the grant signal to break the combinational loop,scheduler.v:88,OpenROAD
+rtl_005,CLOCK_DOMAIN_CROSSING,WARNING,"always @(posedge clk_fast) begin
+  data_out <= data_in_slow;
+end","reg data_sync1, data_sync2;
+always @(posedge clk_fast) begin
+  data_sync1 <= data_in_slow;
+  data_sync2 <= data_sync1;
+end
+assign data_out = data_sync2;",Direct sampling of slow-domain signal in fast-domain without synchronizer,Insert 2-flop synchronizer chain between clock domains,cdc_bridge.v:34,OpenROAD
+rtl_006,UNDRIVEN_PORT,WARNING,"module controller(
+  input clk,
+  input rst,
+  input clk_en
+);
+always @(posedge clk) begin
+  if (!rst) state <= IDLE;
+end","module controller(
+  input clk,
+  input rst,
+  input clk_en
+);
+always @(posedge clk) begin
+  if (!rst) state <= IDLE;
+  else if (clk_en) state <= next_state;
+end",Input port clk_en declared but never used in logic,Use clk_en as clock enable condition in always block,controller.v:8,OpenROAD

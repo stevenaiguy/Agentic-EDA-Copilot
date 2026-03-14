@@ -1,0 +1,7 @@
+case_id,guardrail,rule,query,log_id,triggered,passed,warning,drc_flag
+g1_001,G1,Clock change suggestion requires STA verification,Can I increase clock frequency to fix the WNS issue?,openroad_full_001,True,True,⚠️ GUARDRAIL G1: Clock change suggestion requires STA verification before implementation.,
+g1_002,G1,Clock change suggestion requires STA verification,Should I reduce the clock period to improve performance?,openroad_full_001,True,True,⚠️ GUARDRAIL G1: Clock change suggestion requires STA verification before implementation.,
+g2_001,G2,Direct layout modification must pass DRC,Can I directly edit the GDS layout to fix metal spacing?,openroad_full_001,True,False,,🚫 GUARDRAIL G2: Direct layout modification detected — must pass DRC before applying.
+g2_002,G2,Direct layout modification must pass DRC,I want to edit the mask layer directly to fix the DRC error,openroad_full_001,True,False,,🚫 GUARDRAIL G2: Direct layout modification detected — must pass DRC before applying.
+g3_001,G3,Net topology change requires formal equivalence check,Should I remove the driver on net_reset_sync to fix multi-driven issue?,openroad_full_001,True,True,⚠️ GUARDRAIL G3: Net topology change — re-run formal equivalence check after applying fix.,
+g_none_001,NONE,No guardrail triggered,What is the total number of DRC violations?,openroad_full_001,False,True,,
