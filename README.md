@@ -1,7 +1,10 @@
 # Agentic-EDA Copilot
 
 [![n8n](https://img.shields.io/badge/Orchestration-n8n-red)](https://n8n.io/)
+[![Docker](https://img.shields.io/badge/Container-Docker-blue?logo=docker)](https://www.docker.com/)
 [![LightRAG](https://img.shields.io/badge/RAG-LightRAG-blue)](https://github.com/HKU-Smart-OTEC/LightRAG)
+[![PostgreSQL](https://img.shields.io/badge/Storage-PostgreSQL-336791?logo=postgresql)](https://www.postgresql.org/)
+[![Qdrant](https://img.shields.io/badge/VectorDB-Qdrant-ff4136?logo=qdrant)](https://qdrant.tech/)
 [![Local-AI](https://img.shields.io/badge/Local--AI-Ollama-orange)](https://ollama.com/)
 
 > **2026 智慧創新大賞 (Best AI Awards) 參賽專案**
@@ -51,17 +54,33 @@
 
 ## 🏗️ 系統架構
 
-透過 **n8n** 工作流引擎統一編排，串接以下核心元件：
+整個系統透過 **Docker Compose** 統一編排，做到開箱即用、全程不出機房的私有化晶片除錯環境。
 
-- **Postgres**：儲存工作流狀態與 metadata
-- **Qdrant**：向量資料庫，支援語意相似度檢索
-- **Ollama**：本地 LLM 推論引擎，確保資料不外流
+### 元件一覽
+
+| 元件 | 角色 |
+|------|------|
+| **n8n** | 核心工作流引擎，負責多 Agent 的邏輯編排 |
+| **Docling** | 文件解析層，將 Verilog 結構與 PDF 論文轉成 Markdown 語意片段 |
+| **LightRAG** | 以知識圖譜為基礎的 RAG 引擎，跨領域關聯 Log、論文與 RTL |
+| **Qdrant** | 向量資料庫，儲存高維度程式碼特徵向量 |
+| **Postgres** | 儲存 EDA Session metadata 與 Guardrail 歷史紀錄 |
+| **Ollama** | 本地 LLM 推論引擎，執行 llama3.1:8b、Qwen3:8B 等輕量模型 |
+
+> 所有元件（Docling、Qdrant、Postgres）均以 Docker 容器執行，Ollama 掛載本地 GPU 資源。
 
 ```mermaid
 graph LR
-    A[EDA Log / RTL] --> B(n8n Hybrid Parser)
-    B --> C[(Postgres Metadata)]
-    B --> D[(Qdrant Vector DB)]
+    subgraph Local_Infrastructure ["Docker-Compose Containerized Env"]
+        B(n8n Hybrid Parser)
+        C[(Postgres Metadata)]
+        D[(Qdrant Vector DB)]
+        K(Docling Service)
+    end
+    A[EDA Log / RTL] --> B
+    B --> C
+    B --> D
+    B --> K
     E[Engineer Query] --> F(Agentic Debug Agent)
     F --> G{Guardrail Verification}
     G -->|Pass| H[Safe Fix Suggestion]
