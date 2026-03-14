@@ -46,7 +46,7 @@
 
 專為保護 IC 設計敏感 IP 打造的「全程不出機房」方案：
 
-- 採用本地端 **Qwen3:8B** 模型搭配 **nomic-embed-text** 向量模型
+- 採用本地端 **llama3.1:8b**、**Qwen3:8B** 模型搭配 **nomic-embed-text** 向量模型
 - 提供 **Privacy Attestation**，確保 0% 資料流向雲端 API
 - 輕量架構讓一般工作站也能順暢執行
 
