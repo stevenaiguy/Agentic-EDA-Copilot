@@ -1,0 +1,352 @@
+{
+  "name": "AgenticEDA - Agentic Debug Query",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "debug",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "1f47022b-0655-4c10-84c1-c5461ac4cdae",
+      "name": "Trigger - HTTP Debug Query",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1200,
+        96
+      ],
+      "webhookId": "c50885ae-ea62-4c55-ae15-b0ab12eaa2db"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body;\n\nif (!body.query || !body.log_id) {\n  throw new Error('Missing required: query, log_id');\n}\n\nreturn [{\n  json: {\n    query:    body.query,\n    log_id:   body.log_id,\n    file_id:  body.file_id || null,\n    severity: body.severity || 'ERROR',\n    top_k:    parseInt(body.top_k, 10) || 5,\n    start_ms: Date.now()\n  }\n}];"
+      },
+      "id": "26b53bc5-e99d-4f73-bcdd-35cbffd5ba1f",
+      "name": "Process - Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -752,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT log_id, tool_name, verilog_files, error_count, warning_count, timing_violations, status FROM eda_logs WHERE log_id = '{{ $json.log_id }}' LIMIT 1;",
+        "options": {}
+      },
+      "id": "cb8c639e-a61b-4c6d-bc75-20b8f05bc268",
+      "name": "Integrate - Postgres Fetch Session",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -528,
+        96
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "7YFhFLTJatRgagVN",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-session-exists",
+              "leftValue": "={{ $json.log_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "bcfd8e7a-34d0-43ac-90a4-664adf027873",
+      "name": "Logic - Session Exists?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -96,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:9621/query",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "=={{ $('Process - Validate Input').first().json.query }}"
+            },
+            {
+              "name": "mode",
+              "value": "hybrid"
+            },
+            {
+              "name": "top_k",
+              "value": "={{ $('Process - Validate Input').item.json.top_k }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "f076ba85-834c-426d-bfbf-73d6b567f263",
+      "name": "AI - LightRAG Hybrid Query",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        128,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "TWS5mNx6qmEGlxLk",
+          "name": "LightRAG Header Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Neuro-symbolic Guardrail: Validate LLM output against EDA rules\nconst lightragResp  = $input.first().json;\nconst sessionMeta   = $('Integrate - Postgres Fetch Session').first().json;\nconst inputCtx      = $('Process - Validate Input').first().json;\n\nconst answer = lightragResp.answer || lightragResp.response || '';\nconst rawChunks = lightragResp.chunks || lightragResp.references || [];\n\n// === Guardrail Layer: Rule-based verification ===\nconst guardrail = {\n  passed: true,\n  warnings: [],\n  drc_flags: []\n};\n\n// G1: Reject if LLM suggests changing clock frequency without STA confirmation\nif (/increase.*clock|faster.*clock|reduce.*period/i.test(answer)) {\n  guardrail.warnings.push('⚠️ GUARDRAIL G1: Clock change suggestion requires STA verification before implementation.');\n}\n\n// G2: Reject direct GDS modification suggestions\nif (/gds|layout.*edit|direct.*mask/i.test(answer)) {\n  guardrail.drc_flags.push('🚫 GUARDRAIL G2: Direct layout modification detected — must pass DRC before applying.');\n  guardrail.passed = false;\n}\n\n//// G3: Flag multi-driven net fixes that might introduce new violations\n//if (/remove.*driver|disconnect.*net/i.test(answer)) {\n//  guardrail.warnings.push('⚠️ GUARDRAIL G3: Net topology change — re-run formal equivalence check after applying fix.');\n//}\n// G3: Flag multi-driven net fixes\nif (/remov\\S*.*driver|disconnect.*net|eliminat\\S*.*driver/i.test(answer)) {\n  guardrail.warnings.push('⚠️ GUARDRAIL G3: Net topology change — re-run formal equivalence check after applying fix.');\n}\n\n// Extract structured violations from raw chunks\nconst violations = rawChunks.slice(0, 5).map(c => ({\n  severity: (c.metadata && c.metadata.severity) || 'UNKNOWN',\n  message:  (c.text || c.content || '').substring(0, 300),\n  location: (c.metadata && (c.metadata.file ? `${c.metadata.file}:${c.metadata.file_line}` : c.metadata.net)) || 'N/A',\n  score:    c.score || 0\n}));\n\nreturn [{\n  json: {\n    success: true,\n    log_id:     inputCtx.log_id,\n    tool:       sessionMeta.tool_name,\n    query:      inputCtx.query,\n    diagnosis:  answer,\n    violations,\n    guardrail,\n    session_stats: {\n      error_count:        sessionMeta.error_count,\n      warning_count:      sessionMeta.warning_count,\n      timing_violations:  sessionMeta.timing_violations\n    },\n    latency_ms: Date.now() - inputCtx.start_ms\n  }\n}];"
+      },
+      "id": "16af69f0-c5fa-4036-abcc-b9299351a2b9",
+      "name": "Logic - Neuro-symbolic Guardrail",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        352,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "e7969c66-1104-419a-92f0-59cebed3cf39",
+      "name": "Send - Debug Report Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        576,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": false,\n  \"error\": \"Log session '{{ $('Process - Validate Input').first().json.log_id }}' not found. Please ingest the log first via /api/ingest-log.\",\n  \"status\": 404\n}",
+        "options": {}
+      },
+      "id": "2e14f3bb-5edc-4388-acb8-62b410b7b54a",
+      "name": "Send - Session Not Found",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        128,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://slack.com/api/chat.postMessage",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {}
+      },
+      "id": "dfa32430-b6a6-4f62-a3f1-4feee472a7c6",
+      "name": "Error - Slack Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1200,
+        416
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "c6573866-6cc1-4448-a3d4-2eb06ca2cb8c",
+              "name": "body",
+              "value": "={{ $json.body }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -976,
+        96
+      ],
+      "id": "69643d54-cb62-40f7-9ce8-3f173097059e",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nif (items.length === 0 || !items[0].json.log_id) {\n  return [{ json: { log_id: null } }];\n}\n\nreturn items;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -320,
+        96
+      ],
+      "id": "13ada4bd-c42e-4a71-9f07-faacd292581d",
+      "name": "Process - Guard Empty Session"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Trigger - HTTP Debug Query": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process - Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Integrate - Postgres Fetch Session",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Integrate - Postgres Fetch Session": {
+      "main": [
+        [
+          {
+            "node": "Process - Guard Empty Session",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Logic - Session Exists?": {
+      "main": [
+        [
+          {
+            "node": "AI - LightRAG Hybrid Query",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send - Session Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI - LightRAG Hybrid Query": {
+      "main": [
+        [
+          {
+            "node": "Logic - Neuro-symbolic Guardrail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Logic - Neuro-symbolic Guardrail": {
+      "main": [
+        [
+          {
+            "node": "Send - Debug Report Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Process - Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process - Guard Empty Session": {
+      "main": [
+        [
+          {
+            "node": "Logic - Session Exists?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "248329f9-2244-4068-9695-a47e13cde10f",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "90d91903cda88668c7676c1294819f369b1250dbf93d6adfa6ddce44aa1d6638"
+  },
+  "id": "jkPEUnBACIARIDQu",
+  "tags": []
+}
