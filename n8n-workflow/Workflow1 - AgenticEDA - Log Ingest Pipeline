@@ -1,0 +1,300 @@
+{
+  "name": "AgenticEDA - Log Ingest Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "// Extract and validate input metadata\nconst body = $input.first().json.body;  // ← 關鍵！加 .body\n\nif (!body.log_id || !body.log_content) {\n  throw new Error('Missing required fields: log_id, log_content');\n}\n\nreturn [{\n  json: {\n    log_id: body.log_id,\n    tool_name: body.tool_name || 'OpenROAD',\n    verilog_files: body.verilog_files || [],\n    log_content: body.log_content,\n    rtl_content: body.rtl_content || null,\n    ingested_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "6f620ff3-c130-41f2-a731-40ed37a9e4b2",
+      "name": "Process - Extract Metadata",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -240,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// EDA Log Hybrid Parser: Regex → Structured Chunks\nconst { log_id, tool_name, log_content } = $input.first().json;\n\nconst patterns = {\n  ERROR:       /\\[ERROR\\]|ERROR:|FATAL:|CRITICAL:/i,\n  WARNING:     /\\[WARNING\\]|WARNING:|CAUTION:/i,\n  WNS:         /WNS\\s*[:\\-]?\\s*(-?\\d+\\.?\\d*)/i,\n  TNS:         /TNS\\s*[:\\-]?\\s*(-?\\d+\\.?\\d*)/i,\n  MULTIDRIVEN: /multi[-_]?driven\\s+(net_[^\\s(]+)/i,\n  LATCH:       /latch\\s*(inferred|unexpected)/i,\n  VIOLATION:   /(violat\\S+|fail)/i,\n  FILE_LINE:   /(?:file|line)\\s+(\\w+\\.v?)[ :](\\d+)/i,\n  NET:         /net\\s+(\\S+)/i,\n  MODULE:      /module\\s+(\\w+)/i\n};\n\nfunction getPriorityScore(meta) {\n  let score = 0;\n  if (meta.severity === 'ERROR')   score += 1.0;\n  else if (meta.severity === 'WARNING') score += 0.7;\n  if (meta.has_timing_violation)   score += 0.8;\n  if (meta.timing_tns < 0)         score += 0.3;\n  if (meta.issue_type === 'MULTIDRIVEN')    score += 0.6;\n  if (meta.issue_type === 'LATCH_INFERRED') score += 0.5;\n  if (meta.file) score += 0.2;\n  if (meta.net)  score += 0.1;\n  return Math.min(score, 2.0);\n}\n\nconst lines = log_content.split('\\n');\nconst chunks = [];\n\nfor (let i = 0; i < lines.length; i++) {\n  const line = lines[i].trim();\n  if (!line || line.length < 10) continue;\n\n  const metadata = {\n    log_id,\n    tool: tool_name,\n    line_num: i + 1,\n    severity: 'INFO'\n  };\n\n  if (patterns.ERROR.test(line))   metadata.severity = 'ERROR';\n  else if (patterns.WARNING.test(line)) metadata.severity = 'WARNING';\n\n  const wnsM = line.match(patterns.WNS);\n  if (wnsM) {\n    metadata.timing_wns = parseFloat(wnsM[1]);\n    metadata.has_timing_violation = metadata.timing_wns < 0;\n  }\n  const tnsM = line.match(patterns.TNS);\n  if (tnsM) metadata.timing_tns = parseFloat(tnsM[1]);\n\n  if (patterns.MULTIDRIVEN.test(line)) {\n    const nm = line.match(patterns.MULTIDRIVEN);\n    metadata.issue_type = 'MULTIDRIVEN';\n    metadata.net = nm[1];\n  } else if (patterns.LATCH.test(line)) {\n    metadata.issue_type = 'LATCH_INFERRED';\n  } else if (patterns.VIOLATION.test(line)) {\n    metadata.issue_type = 'VIOLATION';\n  }\n\n  const flM = line.match(patterns.FILE_LINE);\n  if (flM) { metadata.file = flM[1]; metadata.file_line = parseInt(flM[2]); }\n\n  const netM = line.match(patterns.NET);\n  if (netM) metadata.net = netM[1];\n\n  const modM = line.match(patterns.MODULE);\n  if (modM) metadata.module = modM[1];\n\n  const priority = getPriorityScore(metadata);\n  chunks.push({ text: line, metadata, priority });\n}\n\nconst highPriority = chunks\n  .filter(c => c.priority > 0.3)\n  .sort((a, b) => b.priority - a.priority)\n  .slice(0, Math.floor(chunks.length * 0.8));\n\nreturn [{\n  json: {\n    log_id,\n    tool_name,\n    total_lines: lines.length,\n    error_count:   chunks.filter(c => c.metadata.severity === 'ERROR').length,\n    warning_count: chunks.filter(c => c.metadata.severity === 'WARNING').length,\n    timing_violations: chunks.filter(c => c.metadata.has_timing_violation).length,\n    chunks: highPriority\n  }\n}];"
+      },
+      "id": "b3dc99e9-751c-47f9-9d7b-51db36904f44",
+      "name": "Process - EDA Log Parser",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -16,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Split chunks into individual items for batch upload\nconst { log_id, chunks } = $input.first().json;\n\nreturn chunks.map(chunk => ({\n  json: {\n    log_id,\n    file_path: `${log_id}_${chunk.metadata.severity}_L${chunk.metadata.line_num}.txt`,\n    text: chunk.text,\n    metadata: chunk.metadata\n  }\n}));"
+      },
+      "id": "4e1ef45c-ff3d-42de-ba22-82e19d23c427",
+      "name": "Process - Split Chunks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:9621/documents/text",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "file_path",
+              "value": "={{ $json.file_path }}"
+            },
+            {
+              "name": "text",
+              "value": "={{ $json.text }}"
+            },
+            {
+              "name": "metadata",
+              "value": "={{ $json.metadata }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "5eac8ee2-8414-4933-bcaa-aa4b85c6e5c0",
+      "name": "Integrate - LightRAG Upload",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        432,
+        -32
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "TWS5mNx6qmEGlxLk",
+          "name": "LightRAG Header Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO eda_logs (log_id, tool_name, verilog_files, total_lines, error_count, warning_count, timing_violations, chunk_count, status, created_at)\nVALUES (\n  '{{ $('Process - Extract Metadata').first().json.log_id }}',\n  '{{ $('Process - Extract Metadata').first().json.tool_name }}',\n  ARRAY[{{ $('Process - Extract Metadata').first().json.verilog_files.map(f => `'${f}'`).join(',') }}]::TEXT[],\n  {{ $('Process - EDA Log Parser').first().json.total_lines }},\n  {{ $('Process - EDA Log Parser').first().json.error_count }},\n  {{ $('Process - EDA Log Parser').first().json.warning_count }},\n  {{ $('Process - EDA Log Parser').first().json.timing_violations }},\n  {{ $('Process - EDA Log Parser').first().json.chunks.length }},\n  'indexed',\n  NOW()\n)\nON CONFLICT (log_id) DO UPDATE SET\n  status = 'indexed',\n  chunk_count = EXCLUDED.chunk_count;",
+        "options": {}
+      },
+      "id": "3c77eef5-1a6b-4f80-a8d9-e6fbf3a1e89b",
+      "name": "Integrate - Postgres Write Session",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        432,
+        160
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "7YFhFLTJatRgagVN",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": true,\n  \"log_id\": \"{{ $('Process - Extract Metadata').first().json.log_id }}\",\n  \"chunks_indexed\": {{ $('Process - EDA Log Parser').first().json.chunks.length }},\n  \"error_count\": {{ $('Process - EDA Log Parser').first().json.error_count }},\n  \"warning_count\": {{ $('Process - EDA Log Parser').first().json.warning_count }},\n  \"timing_violations\": {{ $('Process - EDA Log Parser').first().json.timing_violations }},\n  \"message\": \"EDA log indexed successfully via Hybrid Parser\"\n}",
+        "options": {}
+      },
+      "id": "3a59c6af-5bf4-49e2-9870-ebc6f0fe59ee",
+      "name": "Send - HTTP Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        656,
+        -32
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ingest-log",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "207aeaa7-285c-455e-8db4-6a79c722b4a0",
+      "name": "Trigger - HTTP Ingest",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -688,
+        64
+      ],
+      "webhookId": "6776714c-4bea-47ba-b623-3385bdb5fc2c"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a547c562-0a9b-4624-bace-0835f9a08a3f",
+              "name": "body",
+              "value": "={{ $json.body }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -464,
+        64
+      ],
+      "id": "82b74fa9-1913-41d7-96b0-a54b1f03003a",
+      "name": "Set - Extract Body"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE TABLE IF NOT EXISTS eda_logs (\n    log_id TEXT PRIMARY KEY,\n    tool_name TEXT,\n    verilog_files TEXT[],\n    total_lines INTEGER,\n    error_count INTEGER,\n    warning_count INTEGER,\n    timing_violations INTEGER,\n    chunk_count INTEGER,\n    status TEXT,\n    created_at TIMESTAMPTZ DEFAULT NOW()\n);",
+        "options": {}
+      },
+      "id": "828c1032-b43b-4687-82c7-72975c13b9fb",
+      "name": "createPostgresTable",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        432,
+        416
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "7YFhFLTJatRgagVN",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM eda_logs WHERE log_id = 'test_log_001';",
+        "options": {}
+      },
+      "id": "a1e15661-d21a-4980-896f-8fdd8b11a562",
+      "name": "checkPostgresTable",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        672,
+        416
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "7YFhFLTJatRgagVN",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Process - Extract Metadata": {
+      "main": [
+        [
+          {
+            "node": "Process - EDA Log Parser",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process - EDA Log Parser": {
+      "main": [
+        [
+          {
+            "node": "Process - Split Chunks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process - Split Chunks": {
+      "main": [
+        [
+          {
+            "node": "Integrate - Postgres Write Session",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Integrate - LightRAG Upload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Integrate - LightRAG Upload": {
+      "main": [
+        [
+          {
+            "node": "Send - HTTP Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger - HTTP Ingest": {
+      "main": [
+        [
+          {
+            "node": "Set - Extract Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set - Extract Body": {
+      "main": [
+        [
+          {
+            "node": "Process - Extract Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "633b9151-dd50-4952-bc6d-6b0a49038e58",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "90d91903cda88668c7676c1294819f369b1250dbf93d6adfa6ddce44aa1d6638"
+  },
+  "id": "F6HWRtkSW0koioFt",
+  "tags": []
+}
