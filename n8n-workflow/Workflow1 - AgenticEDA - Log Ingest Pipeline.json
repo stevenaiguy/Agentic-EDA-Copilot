@@ -1,10 +1,10 @@
 {
-  "name": "🚀 0423-AgenticEDA - Log Ingest Pipeline v3",
+  "name": "🚀 0423-AgenticEDA - Log Ingest Pipeline v4",
   "nodes": [
     {
       "parameters": {
         "httpMethod": "POST",
-        "path": "c4535fb4-54d2-44e3-bfc7-b9a4ac6e1e78",
+        "path": "log-ingest",
         "responseMode": "responseNode",
         "options": {}
       },
@@ -59,6 +59,7 @@
         "conditions": {
           "options": {
             "caseSensitive": true,
+            "leftValue": "",
             "typeValidation": "strict",
             "version": 3
           },
@@ -146,15 +147,15 @@
           "parameters": [
             {
               "name": "filepath",
-              "value": "$json.filepath"
+              "value": "={{$json.filepath}}"
             },
             {
               "name": "text",
-              "value": "$json.text"
+              "value": "={{$json.text}}"
             },
             {
               "name": "metadata",
-              "value": "$json.metadata"
+              "value": "={{$json.metadata}}"
             }
           ]
         },
@@ -334,60 +335,16 @@
     },
     {
       "parameters": {
-        "content": "### 測試：Log Ingest v2\n\n{\n  \"requestid\": \"req-ingest-v2-001\",\n  \"logid\": \"testlog001\",\n  \"toolname\": \"OpenROAD\",\n  \"verilogfiles\": [\"rtltopmodule.v\", \"rtlalu.v\", \"rtlclkdiv.v\"],\n  \"logcontent\": \"INFO Starting synthesis run\\nlatch inferred in module alu_core\\nsetup violation detected WNS -0.182 TNS -1.430 file alu_core.v 128 net net_alu_result module alu_core\\nmulti-driven net net_clk_buf detected in module topmodule\\nWARNING timing violation fail file topmodule.v 244 net net_data_out module topmodule\\nINFO Run completed with violations\",\n  \"context\": \"phase2 ingest smoke test\"\n}",
-        "height": 288,
-        "width": 544
+        "jsCode": "const data = $('Process - Build Error Response').first().json;\n\nreturn [{\n  json: {\n    success: false,\n    requestid: data.requestid,\n    mode: data.mode,\n    stage: data.stage,\n    subjectid: data.subjectid || null,\n    sessionid: data.sessionid || null,\n    fileid: data.fileid || null,\n    timestamp: data.timestamp,\n    error: data.error || {\n      code: 'UNKNOWNERROR',\n      message: 'Unknown error.',\n      stage: data.stage || 'unknown',\n      retryable: false,\n      httpstatus: 500\n    },\n    summary: data.summary || null,\n    details: data.details || {},\n    evidence: data.evidence || [],\n    risk: data.risk || { level: 'low' },\n    guardrail: data.guardrail || {\n      passed: true,\n      warnings: [],\n      blocks: [],\n      recommendedchecks: []\n    },\n    privacy: data.privacy || undefined,\n    metrics: data.metrics || {},\n    raw: data.raw || {}\n  }\n}];"
       },
-      "type": "n8n-nodes-base.stickyNote",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
-        368,
-        864
-      ],
-      "typeVersion": 1,
-      "id": "b10bff27-9c5f-47d0-a539-f2858110f4b4",
-      "name": "Sticky Note"
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "VALUES (\n  '{{$(\"Process - Build Error Response\").first().json.requestid}}',\n  '0422-AgenticEDA - Log Ingest Pipeline v2',\n  '{{$(\"Process - Build Error Response\").first().json.error.stage}}',\n  'ERROR',\n  '{{$(\"Process - Build Error Response\").first().json.error.code}}',\n  {{$(\"Process - Build Error Response\").first().json.error.retryable ? 'TRUE' : 'FALSE'}},\n  {{$(\"Process - Build Error Response\").first().json.metrics.latencyms || 0}},\n  '{{$(\"Process - Build Error Response\").first().json ? JSON.stringify({\n    subjectid: $(\"Process - Build Error Response\").first().json.subjectid,\n    sessionid: $(\"Process - Build Error Response\").first().json.sessionid,\n    fileid: $(\"Process - Build Error Response\").first().json.fileid,\n    message: $(\"Process - Build Error Response\").first().json.error.message\n  }).replace(/'/g, \"''\") : \"{}\"}}'::jsonb\n);",
-        "options": {}
-      },
-      "id": "f7ee19ba-fd88-4c03-af76-c4d002c8094b",
-      "name": "Integrate - Postgres Audit Error0",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.5,
-      "position": [
-        960,
+        1440,
         320
       ],
-      "credentials": {
-        "postgres": {
-          "id": "QxVoLtrZIl8A3Id8",
-          "name": "Postgres account"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "INSERT INTO eda_sessions (\n  session_id, logid, requestid, toolname, source_type, status, ingestversion,\n  topseverity, primaryissuetype, primarylocation, totallines, errorcount,\n  warningcount, timingviolations, chunkcount, metadata\n)\nVALUES (\n  '{{$json.sessionid}}',\n  '{{$json.subjectid}}',\n  '{{$json.requestid}}',\n  '{{$json.details.toolname}}',\n  'eda_log',\n  'indexed',\n  '{{$json.details.ingestversion}}',\n  '{{$json.summary.severity}}',\n  '{{$json.details.parsersummary.primaryissuetype}}',\n  '{{$json.summary.primarylocation}}',\n  {{$json.metrics.totallines || 0}},\n  {{$json.metrics.errorcount || 0}},\n  {{$json.metrics.warningcount || 0}},\n  {{$json.metrics.timingviolations || 0}},\n  {{$json.metrics.chunkcount || 0}},\n  '{{ JSON.stringify({ verilogfiles: $json.details.verilogfiles, uploadsummary: $json.details.uploadsummary }) }}'::jsonb\n)\nON CONFLICT (logid)\nDO UPDATE SET\n  requestid = EXCLUDED.requestid,\n  toolname = EXCLUDED.toolname,\n  source_type = EXCLUDED.source_type,\n  status = EXCLUDED.status,\n  ingestversion = EXCLUDED.ingestversion,\n  topseverity = EXCLUDED.topseverity,\n  primaryissuetype = EXCLUDED.primaryissuetype,\n  primarylocation = EXCLUDED.primarylocation,\n  totallines = EXCLUDED.totallines,\n  errorcount = EXCLUDED.errorcount,\n  warningcount = EXCLUDED.warningcount,\n  timingviolations = EXCLUDED.timingviolations,\n  chunkcount = EXCLUDED.chunkcount,\n  metadata = EXCLUDED.metadata,\n  updatedat = NOW();",
-        "options": {}
-      },
-      "id": "334d7b54-4826-468f-9475-3a96373c1621",
-      "name": "Integrate - Postgres Write Session0",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.5,
-      "position": [
-        960,
-        0
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "QxVoLtrZIl8A3Id8",
-          "name": "Postgres account"
-        }
-      }
+      "id": "a0b41f29-451e-4150-950c-268d308f943f",
+      "name": "Process - Build Final Error Response"
     },
     {
       "parameters": {
@@ -396,7 +353,7 @@
         "options": {}
       },
       "id": "f362adff-cec1-4ae4-8d38-278cefe7b1db",
-      "name": "Integrate - Postgres Write File Registry0",
+      "name": "Integrate - Postgres Write File Registry",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
@@ -413,16 +370,37 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "VALUES (\n  '{{$(\"Process - Build Phase 1 Ingest Response\").first().json.requestid}}',\n  '0422-AgenticEDA - Log Ingest Pipeline v2',\n  '{{$(\"Process - Build Phase 1 Ingest Response\").first().json.stage}}',\n  'SUCCESS',\n  NULL,\n  FALSE,\n  {{$(\"Process - Build Phase 1 Ingest Response\").first().json.metrics.latencyms || 0}},\n  '{{$(\"Process - Build Phase 1 Ingest Response\").first().json ? JSON.stringify({\n    subjectid: $(\"Process - Build Phase 1 Ingest Response\").first().json.subjectid,\n    sessionid: $(\"Process - Build Phase 1 Ingest Response\").first().json.sessionid,\n    fileid: $(\"Process - Build Phase 1 Ingest Response\").first().json.fileid,\n    uploadsummary: $(\"Process - Build Phase 1 Ingest Response\").first().json.details.uploadsummary\n  }).replace(/'/g, \"''\") : \"{}\"}}'::jsonb\n);",
+        "query": "INSERT INTO eda_sessions (\n  session_id, logid, requestid, toolname, source_type, status, ingestversion,\n  topseverity, primaryissuetype, primarylocation, totallines, errorcount,\n  warningcount, timingviolations, chunkcount, metadata\n)\nVALUES (\n  '{{$json.sessionid}}',\n  '{{$json.subjectid}}',\n  '{{$json.requestid}}',\n  '{{$json.details.toolname}}',\n  'eda_log',\n  'indexed',\n  '{{$json.details.ingestversion}}',\n  '{{$json.summary.severity}}',\n  '{{$json.details.parsersummary.primaryissuetype}}',\n  '{{$json.summary.primarylocation}}',\n  {{$json.metrics.totallines || 0}},\n  {{$json.metrics.errorcount || 0}},\n  {{$json.metrics.warningcount || 0}},\n  {{$json.metrics.timingviolations || 0}},\n  {{$json.metrics.chunkcount || 0}},\n  '{{ JSON.stringify({ verilogfiles: $json.details.verilogfiles, uploadsummary: $json.details.uploadsummary }) }}'::jsonb\n)\nON CONFLICT (logid)\nDO UPDATE SET\n  requestid = EXCLUDED.requestid,\n  toolname = EXCLUDED.toolname,\n  source_type = EXCLUDED.source_type,\n  status = EXCLUDED.status,\n  ingestversion = EXCLUDED.ingestversion,\n  topseverity = EXCLUDED.topseverity,\n  primaryissuetype = EXCLUDED.primaryissuetype,\n  primarylocation = EXCLUDED.primarylocation,\n  totallines = EXCLUDED.totallines,\n  errorcount = EXCLUDED.errorcount,\n  warningcount = EXCLUDED.warningcount,\n  timingviolations = EXCLUDED.timingviolations,\n  chunkcount = EXCLUDED.chunkcount,\n  metadata = EXCLUDED.metadata,\n  updatedat = NOW();",
         "options": {}
       },
-      "id": "bc3c2891-ddbe-424a-84c6-94d133f612d1",
-      "name": "Integrate - Postgres Audit Success0",
+      "id": "334d7b54-4826-468f-9475-3a96373c1621",
+      "name": "Integrate - Postgres Write Session",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        1920,
+        960,
         0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "QxVoLtrZIl8A3Id8",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO workflow_audit_logs (\n  requestid, workflow_name, stage, status, error_code, retryable, latencyms, metadata\n)\nVALUES (\n  '{{$(\"Process - Build Error Response\").first().json.requestid}}',\n  '0422-AgenticEDA - Log Ingest Pipeline v2',\n  '{{$(\"Process - Build Error Response\").first().json.error.stage}}',\n  'ERROR',\n  '{{$(\"Process - Build Error Response\").first().json.error.code}}',\n  {{$(\"Process - Build Error Response\").first().json.error.retryable ? 'TRUE' : 'FALSE'}},\n  {{$(\"Process - Build Error Response\").first().json.metrics.latencyms || 0}},\n  '{{$(\"Process - Build Error Response\").first().json ? JSON.stringify({\n    subjectid: $(\"Process - Build Error Response\").first().json.subjectid,\n    sessionid: $(\"Process - Build Error Response\").first().json.sessionid,\n    fileid: $(\"Process - Build Error Response\").first().json.fileid,\n    message: $(\"Process - Build Error Response\").first().json.error.message\n  }).replace(/'/g, \"''\") : \"{}\"}}'::jsonb\n);",
+        "options": {}
+      },
+      "id": "f7ee19ba-fd88-4c03-af76-c4d002c8094b",
+      "name": "Integrate - Postgres Audit Error",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        960,
+        320
       ],
       "credentials": {
         "postgres": {
@@ -438,7 +416,7 @@
         "options": {}
       },
       "id": "6273db66-897a-4c74-bce2-27a9409697ea",
-      "name": "Integrate - Postgres Write Chunk Registry0",
+      "name": "Integrate - Postgres Write Chunk Registry",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
@@ -454,64 +432,24 @@
     },
     {
       "parameters": {
-        "content": "### 測試：Input Invalid 1\n\n{\n  \"requestid\": \"req-ingest-invalid-001\",\n  \"logid\": \"testlog-invalid-001\",\n  \"toolname\": \"OpenROAD\",\n  \"verilogfiles\": [\"rtltopmodule.v\", \"rtlalu.v\"],\n  \"context\": \"test invalid path - missing logcontent\"\n}",
-        "height": 208,
-        "width": 544,
-        "color": 3
+        "operation": "executeQuery",
+        "query": "INSERT INTO workflow_audit_logs (\n  requestid, workflow_name, stage, status, error_code, retryable, latencyms, metadata\n)\nVALUES (\n  '{{$(\"Process - Build Phase 1 Ingest Response\").first().json.requestid}}',\n  '0422-AgenticEDA - Log Ingest Pipeline v2',\n  '{{$(\"Process - Build Phase 1 Ingest Response\").first().json.stage}}',\n  'SUCCESS',\n  NULL,\n  FALSE,\n  {{$(\"Process - Build Phase 1 Ingest Response\").first().json.metrics.latencyms || 0}},\n  '{{$(\"Process - Build Phase 1 Ingest Response\").first().json ? JSON.stringify({\n    subjectid: $(\"Process - Build Phase 1 Ingest Response\").first().json.subjectid,\n    sessionid: $(\"Process - Build Phase 1 Ingest Response\").first().json.sessionid,\n    fileid: $(\"Process - Build Phase 1 Ingest Response\").first().json.fileid,\n    uploadsummary: $(\"Process - Build Phase 1 Ingest Response\").first().json.details.uploadsummary\n  }).replace(/'/g, \"''\") : \"{}\"}}'::jsonb\n);",
+        "options": {}
       },
-      "type": "n8n-nodes-base.stickyNote",
+      "id": "bc3c2891-ddbe-424a-84c6-94d133f612d1",
+      "name": "Integrate - Postgres Audit Success",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
       "position": [
-        992,
-        864
+        1920,
+        0
       ],
-      "typeVersion": 1,
-      "id": "3a800237-0c1e-45ea-b775-c91bb44da7c2",
-      "name": "Sticky Note1"
-    },
-    {
-      "parameters": {
-        "content": "### 測試：Input Invalid 2\n\n{\n  \"requestid\": \"req-ingest-invalid-002\",\n  \"toolname\": \"OpenROAD\",\n  \"verilogfiles\": [\"rtltopmodule.v\", \"rtlalu.v\"],\n  \"logcontent\": \"WARNING timing violation file top.v 10 net net_x module top\",\n  \"context\": \"test invalid path - missing logid\"\n}",
-        "height": 208,
-        "width": 544,
-        "color": 3
-      },
-      "type": "n8n-nodes-base.stickyNote",
-      "position": [
-        992,
-        1104
-      ],
-      "typeVersion": 1,
-      "id": "42aeec7c-61b7-45c4-9ddc-1989cde2f0cc",
-      "name": "Sticky Note2"
-    },
-    {
-      "parameters": {
-        "content": "### 測試：Upload fail\n\n{\n  \"requestid\": \"req-ingest-uploadfail-001\",\n  \"logid\": \"testlog-uploadfail-001\",\n  \"toolname\": \"OpenROAD\",\n  \"verilogfiles\": [\"rtltopmodule.v\", \"rtlalu.v\", \"rtlclkdiv.v\"],\n  \"logcontent\": \"INFO Starting synthesis run\\nlatch inferred in module alu_core\\nsetup violation detected WNS -0.182 TNS -1.430 file alu_core.v 128 net net_alu_result module alu_core\\nmulti-driven net net_clk_buf detected in module topmodule\\nWARNING timing violation fail file topmodule.v 244 net net_data_out module topmodule\\nINFO Run completed with violations\",\n  \"context\": \"test upload fail path\"\n}",
-        "height": 208,
-        "width": 544,
-        "color": 3
-      },
-      "type": "n8n-nodes-base.stickyNote",
-      "position": [
-        992,
-        1360
-      ],
-      "typeVersion": 1,
-      "id": "d2190372-67be-495d-9ae7-03df6d26f356",
-      "name": "Sticky Note3"
-    },
-    {
-      "parameters": {
-        "jsCode": "const data = $('Process - Build Error Response').first().json;\n\nreturn [{\n  json: {\n    success: false,\n    requestid: data.requestid,\n    mode: data.mode,\n    stage: data.stage,\n    subjectid: data.subjectid || null,\n    sessionid: data.sessionid || null,\n    fileid: data.fileid || null,\n    timestamp: data.timestamp,\n    error: data.error || {\n      code: 'UNKNOWNERROR',\n      message: 'Unknown error.',\n      stage: data.stage || 'unknown',\n      retryable: false,\n      httpstatus: 500\n    },\n    summary: data.summary || null,\n    details: data.details || {},\n    evidence: data.evidence || [],\n    risk: data.risk || { level: 'low' },\n    guardrail: data.guardrail || {\n      passed: true,\n      warnings: [],\n      blocks: [],\n      recommendedchecks: []\n    },\n    privacy: data.privacy || undefined,\n    metrics: data.metrics || {},\n    raw: data.raw || {}\n  }\n}];"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1440,
-        320
-      ],
-      "id": "a0b41f29-451e-4150-950c-268d308f943f",
-      "name": "Process - Build Final Error Response"
+      "credentials": {
+        "postgres": {
+          "id": "QxVoLtrZIl8A3Id8",
+          "name": "Postgres account"
+        }
+      }
     }
   ],
   "pinData": {},
@@ -644,7 +582,7 @@
       "main": [
         [
           {
-            "node": "Integrate - Postgres Write Session0",
+            "node": "Integrate - Postgres Write Session",
             "type": "main",
             "index": 0
           }
@@ -655,7 +593,7 @@
       "main": [
         [
           {
-            "node": "Integrate - Postgres Write Chunk Registry0",
+            "node": "Integrate - Postgres Write Chunk Registry",
             "type": "main",
             "index": 0
           }
@@ -677,7 +615,7 @@
       "main": [
         [
           {
-            "node": "Integrate - Postgres Audit Error0",
+            "node": "Integrate - Postgres Audit Error",
             "type": "main",
             "index": 0
           }
@@ -695,61 +633,6 @@
         ]
       ]
     },
-    "Integrate - Postgres Audit Error0": {
-      "main": [
-        [
-          {
-            "node": "Send - Ingest Error Email Alert",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Integrate - Postgres Write Session0": {
-      "main": [
-        [
-          {
-            "node": "Integrate - Postgres Write File Registry0",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Integrate - Postgres Write File Registry0": {
-      "main": [
-        [
-          {
-            "node": "Process - Prepare Chunk Registry SQL",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Integrate - Postgres Write Chunk Registry0": {
-      "main": [
-        [
-          {
-            "node": "Integrate - Postgres Audit Success0",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Integrate - Postgres Audit Success0": {
-      "main": [
-        [
-          {
-            "node": "Process - Build Final Ingest Response",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Process - Build Final Error Response": {
       "main": [
         [
@@ -760,14 +643,69 @@
           }
         ]
       ]
+    },
+    "Integrate - Postgres Write File Registry": {
+      "main": [
+        [
+          {
+            "node": "Process - Prepare Chunk Registry SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Integrate - Postgres Write Session": {
+      "main": [
+        [
+          {
+            "node": "Integrate - Postgres Write File Registry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Integrate - Postgres Audit Error": {
+      "main": [
+        [
+          {
+            "node": "Send - Ingest Error Email Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Integrate - Postgres Write Chunk Registry": {
+      "main": [
+        [
+          {
+            "node": "Integrate - Postgres Audit Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Integrate - Postgres Audit Success": {
+      "main": [
+        [
+          {
+            "node": "Process - Build Final Ingest Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
-  "active": false,
+  "active": true,
   "settings": {
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "75a42bd5-323a-4ce5-8c8e-8224e8bb6acf",
+  "versionId": "ab8ed5d9-b340-48a7-a1d4-00e1c617258d",
   "meta": {
     "instanceId": "d5ef0d0e5582913a3ef5d407553e79af26cb91f094474e4052aefc0d92253e3f"
   },
