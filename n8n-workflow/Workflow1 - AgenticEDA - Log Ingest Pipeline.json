@@ -1,49 +1,135 @@
 {
-  "name": "AgenticEDA - Log Ingest Pipeline",
+  "name": "🚀 0423-AgenticEDA - Log Ingest Pipeline v3",
   "nodes": [
     {
       "parameters": {
-        "jsCode": "// Extract and validate input metadata\nconst body = $input.first().json.body;  // ← 關鍵！加 .body\n\nif (!body.log_id || !body.log_content) {\n  throw new Error('Missing required fields: log_id, log_content');\n}\n\nreturn [{\n  json: {\n    log_id: body.log_id,\n    tool_name: body.tool_name || 'OpenROAD',\n    verilog_files: body.verilog_files || [],\n    log_content: body.log_content,\n    rtl_content: body.rtl_content || null,\n    ingested_at: new Date().toISOString()\n  }\n}];"
+        "httpMethod": "POST",
+        "path": "c4535fb4-54d2-44e3-bfc7-b9a4ac6e1e78",
+        "responseMode": "responseNode",
+        "options": {}
       },
-      "id": "6f620ff3-c130-41f2-a731-40ed37a9e4b2",
+      "id": "6e43078f-a376-4b82-98e1-aa4fcec84283",
+      "name": "Trigger - HTTP Ingest",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1680,
+        128
+      ],
+      "webhookId": "aa16bf97-e508-4dbe-a0a3-5c2ba31489f2"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ingestv2-body-001",
+              "name": "body",
+              "value": "={{$json.body}}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "6ed06696-dafd-4a94-83db-96fe5afb85e1",
+      "name": "Process - Extract Body",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -1440,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || {};\nconst now = new Date();\nconst missing = [];\nif (!body.logid) missing.push('logid');\nif (!body.logcontent) missing.push('logcontent');\nconst sessionId = body.sessionid || `sess-${body.logid || Date.now()}`;\nconst fileId = body.fileid || `file-${body.logid || Date.now()}`;\nreturn [{\n  json: {\n    requestid: body.requestid || `reqingest-${Date.now()}`,\n    sessionid: sessionId,\n    fileid: fileId,\n    mode: 'ingest',\n    stage: 'logingestion',\n    timestamp: now.toISOString(),\n    ingestversion: 'phase2v1',\n    source_type: 'eda_log',\n    file_type: '.log',\n    logid: body.logid || null,\n    toolname: body.toolname || 'OpenROAD',\n    verilogfiles: Array.isArray(body.verilogfiles) ? body.verilogfiles : [],\n    logcontent: body.logcontent || null,\n    rtlcontent: body.rtlcontent || null,\n    context: body.context || null,\n    topk: parseInt(body.topk, 10) || 5,\n    startms: Date.now(),\n    inputvalid: missing.length === 0,\n    validationerrorcode: missing.length ? 'INVALIDINPUT' : null,\n    validationerrormessage: missing.length ? `Missing required ${missing.join(', ')}` : null\n  }\n}];"
+      },
+      "id": "501abf7d-87b2-48bd-8e87-ecbf161c11cd",
+      "name": "Process - Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1200,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "ingestv2-cond-valid",
+              "leftValue": "={{$json.inputvalid}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "d41b7c34-105e-46a8-bd4a-83ed2b1edc17",
+      "name": "Logic - Input Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -960,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nreturn [{\n  json: {\n    requestid: input.requestid,\n    sessionid: input.sessionid,\n    fileid: input.fileid,\n    mode: input.mode,\n    stage: input.stage,\n    timestamp: input.timestamp,\n    ingestversion: input.ingestversion,\n    source_type: input.source_type,\n    file_type: input.file_type,\n    logid: input.logid,\n    toolname: input.toolname,\n    verilogfiles: input.verilogfiles,\n    logcontent: input.logcontent,\n    rtlcontent: input.rtlcontent,\n    context: input.context,\n    startms: input.startms\n  }\n}];"
+      },
+      "id": "fe26e0c3-433b-45fe-80b7-841d05c43ea9",
       "name": "Process - Extract Metadata",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -240,
-        64
+        -720,
+        128
       ]
     },
     {
       "parameters": {
-        "jsCode": "// EDA Log Hybrid Parser: Regex → Structured Chunks\nconst { log_id, tool_name, log_content } = $input.first().json;\n\nconst patterns = {\n  ERROR:       /\\[ERROR\\]|ERROR:|FATAL:|CRITICAL:/i,\n  WARNING:     /\\[WARNING\\]|WARNING:|CAUTION:/i,\n  WNS:         /WNS\\s*[:\\-]?\\s*(-?\\d+\\.?\\d*)/i,\n  TNS:         /TNS\\s*[:\\-]?\\s*(-?\\d+\\.?\\d*)/i,\n  MULTIDRIVEN: /multi[-_]?driven\\s+(net_[^\\s(]+)/i,\n  LATCH:       /latch\\s*(inferred|unexpected)/i,\n  VIOLATION:   /(violat\\S+|fail)/i,\n  FILE_LINE:   /(?:file|line)\\s+(\\w+\\.v?)[ :](\\d+)/i,\n  NET:         /net\\s+(\\S+)/i,\n  MODULE:      /module\\s+(\\w+)/i\n};\n\nfunction getPriorityScore(meta) {\n  let score = 0;\n  if (meta.severity === 'ERROR')   score += 1.0;\n  else if (meta.severity === 'WARNING') score += 0.7;\n  if (meta.has_timing_violation)   score += 0.8;\n  if (meta.timing_tns < 0)         score += 0.3;\n  if (meta.issue_type === 'MULTIDRIVEN')    score += 0.6;\n  if (meta.issue_type === 'LATCH_INFERRED') score += 0.5;\n  if (meta.file) score += 0.2;\n  if (meta.net)  score += 0.1;\n  return Math.min(score, 2.0);\n}\n\nconst lines = log_content.split('\\n');\nconst chunks = [];\n\nfor (let i = 0; i < lines.length; i++) {\n  const line = lines[i].trim();\n  if (!line || line.length < 10) continue;\n\n  const metadata = {\n    log_id,\n    tool: tool_name,\n    line_num: i + 1,\n    severity: 'INFO'\n  };\n\n  if (patterns.ERROR.test(line))   metadata.severity = 'ERROR';\n  else if (patterns.WARNING.test(line)) metadata.severity = 'WARNING';\n\n  const wnsM = line.match(patterns.WNS);\n  if (wnsM) {\n    metadata.timing_wns = parseFloat(wnsM[1]);\n    metadata.has_timing_violation = metadata.timing_wns < 0;\n  }\n  const tnsM = line.match(patterns.TNS);\n  if (tnsM) metadata.timing_tns = parseFloat(tnsM[1]);\n\n  if (patterns.MULTIDRIVEN.test(line)) {\n    const nm = line.match(patterns.MULTIDRIVEN);\n    metadata.issue_type = 'MULTIDRIVEN';\n    metadata.net = nm[1];\n  } else if (patterns.LATCH.test(line)) {\n    metadata.issue_type = 'LATCH_INFERRED';\n  } else if (patterns.VIOLATION.test(line)) {\n    metadata.issue_type = 'VIOLATION';\n  }\n\n  const flM = line.match(patterns.FILE_LINE);\n  if (flM) { metadata.file = flM[1]; metadata.file_line = parseInt(flM[2]); }\n\n  const netM = line.match(patterns.NET);\n  if (netM) metadata.net = netM[1];\n\n  const modM = line.match(patterns.MODULE);\n  if (modM) metadata.module = modM[1];\n\n  const priority = getPriorityScore(metadata);\n  chunks.push({ text: line, metadata, priority });\n}\n\nconst highPriority = chunks\n  .filter(c => c.priority > 0.3)\n  .sort((a, b) => b.priority - a.priority)\n  .slice(0, Math.floor(chunks.length * 0.8));\n\nreturn [{\n  json: {\n    log_id,\n    tool_name,\n    total_lines: lines.length,\n    error_count:   chunks.filter(c => c.metadata.severity === 'ERROR').length,\n    warning_count: chunks.filter(c => c.metadata.severity === 'WARNING').length,\n    timing_violations: chunks.filter(c => c.metadata.has_timing_violation).length,\n    chunks: highPriority\n  }\n}];"
+        "jsCode": "const { logid, toolname, logcontent } = $input.first().json;\nconst patterns = {\n  ERROR: /(ERROR|FATAL|CRITICAL)/i,\n  WARNING: /(WARNING|CAUTION)/i,\n  WNS: /WNS\\s*(-?\\d+\\.?\\d*)/i,\n  TNS: /TNS\\s*(-?\\d+\\.?\\d*)/i,\n  MULTIDRIVEN: /multi-?driven\\s+net\\s+([A-Za-z0-9_]+)/i,\n  LATCH: /(latch\\s+inferred|unexpected\\s+latch)/i,\n  VIOLATION: /(violation|setup\\s+violation|hold\\s+violation|fail)/i,\n  FILELINE: /file\\s+([A-Za-z0-9_\\.\\/\\-]+)\\s+(\\d+)/i,\n  NET: /net\\s+([A-Za-z0-9_]+)/i,\n  MODULE: /module\\s+([A-Za-z0-9_]+)/i\n};\nconst preprocessed = String(logcontent || '').replace(/\\r/g, '').trim();\nconst lines = preprocessed.split('\\n').map(l => l.trim()).filter(l => l.length > 0);\nfunction getPriorityScore(meta) {\n  let score = 0;\n  if (meta.severity === 'ERROR') score += 1.0;\n  else if (meta.severity === 'WARNING') score += 0.7;\n  if (meta.hastimingviolation) score += 0.8;\n  if ((meta.timingtns ?? 0) < 0) score += 0.3;\n  if (meta.issuetype === 'MULTIDRIVEN') score += 0.6;\n  if (meta.issuetype === 'LATCHINFERRED') score += 0.5;\n  if (meta.file) score += 0.2;\n  if (meta.net) score += 0.1;\n  return Math.min(score, 2.0);\n}\nconst chunks = [];\nfor (let i = 0; i < lines.length; i++) {\n  const line = lines[i];\n  if (!line || line.length < 3) continue;\n  const metadata = {\n    logid,\n    tool: toolname,\n    linenum: i + 1,\n    severity: 'INFO'\n  };\n  if (patterns.ERROR.test(line)) metadata.severity = 'ERROR';\n  else if (patterns.WARNING.test(line)) metadata.severity = 'WARNING';\n  const wnsM = line.match(patterns.WNS);\n  if (wnsM) {\n    metadata.timingwns = parseFloat(wnsM[1]);\n    metadata.hastimingviolation = metadata.timingwns < 0;\n  }\n  const tnsM = line.match(patterns.TNS);\n  if (tnsM) metadata.timingtns = parseFloat(tnsM[1]);\n  if (patterns.MULTIDRIVEN.test(line)) {\n    const m = line.match(patterns.MULTIDRIVEN);\n    metadata.issuetype = 'MULTIDRIVEN';\n    metadata.net = m?.[1] || null;\n  } else if (patterns.LATCH.test(line)) {\n    metadata.issuetype = 'LATCHINFERRED';\n  } else if (patterns.VIOLATION.test(line)) {\n    metadata.issuetype = 'VIOLATION';\n  }\n  const flM = line.match(patterns.FILELINE);\n  if (flM) {\n    metadata.file = flM[1];\n    metadata.fileline = parseInt(flM[2], 10);\n  }\n  const netM = line.match(patterns.NET);\n  if (netM && !metadata.net) metadata.net = netM[1];\n  const modM = line.match(patterns.MODULE);\n  if (modM) metadata.module = modM[1];\n  const priority = getPriorityScore(metadata);\n  chunks.push({ text: line, metadata, priority });\n}\nconst highPriority = chunks.filter(c => c.priority >= 0.3).sort((a, b) => b.priority - a.priority);\nconst keepCount = Math.max(1, Math.floor(chunks.length * 0.8));\nconst finalChunks = highPriority.length > 0 ? highPriority.slice(0, keepCount) : chunks.filter(c => c.metadata.severity !== 'INFO');\nreturn [{\n  json: {\n    logid,\n    toolname,\n    totallines: lines.length,\n    errorcount: chunks.filter(c => c.metadata.severity === 'ERROR').length,\n    warningcount: chunks.filter(c => c.metadata.severity === 'WARNING').length,\n    timingviolations: chunks.filter(c => c.metadata.hastimingviolation).length,\n    chunks: finalChunks\n  }\n}];"
       },
-      "id": "b3dc99e9-751c-47f9-9d7b-51db36904f44",
+      "id": "becdc33c-b3cf-43a9-a8e0-668d4ce095ec",
       "name": "Process - EDA Log Parser",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -16,
-        64
+        -480,
+        128
       ]
     },
     {
       "parameters": {
-        "jsCode": "// Split chunks into individual items for batch upload\nconst { log_id, chunks } = $input.first().json;\n\nreturn chunks.map(chunk => ({\n  json: {\n    log_id,\n    file_path: `${log_id}_${chunk.metadata.severity}_L${chunk.metadata.line_num}.txt`,\n    text: chunk.text,\n    metadata: chunk.metadata\n  }\n}));"
+        "jsCode": "const parser = $('Process - EDA Log Parser').first().json;\nconst meta = $('Process - Extract Metadata').first().json;\nconst chunks = parser.chunks || [];\nreturn chunks.map((chunk, index) => ({\n  json: {\n    requestid: meta.requestid,\n    sessionid: meta.sessionid,\n    fileid: meta.fileid,\n    mode: meta.mode,\n    stage: meta.stage,\n    timestamp: meta.timestamp,\n    ingestversion: meta.ingestversion,\n    startms: meta.startms,\n    source_type: meta.source_type,\n    file_type: meta.file_type,\n    logid: meta.logid,\n    toolname: meta.toolname,\n    verilogfiles: meta.verilogfiles,\n    parsertotallines: parser.totallines,\n    parsererrorcount: parser.errorcount,\n    parserwarningcount: parser.warningcount,\n    parsertimingviolations: parser.timingviolations,\n    parserchunkcount: chunks.length,\n    chunkindex: index + 1,\n    chunk_id: `${meta.logid}-chunk-${index + 1}`,\n    filepath: `${meta.logid}-${chunk.metadata.severity}-L${chunk.metadata.linenum}.txt`,\n    text: `logid=${meta.logid} tool=${chunk.metadata.tool} severity=${chunk.metadata.severity} ${chunk.text}`,\n    rawtext: chunk.text,\n    metadata: chunk.metadata,\n    priority: chunk.priority\n  }\n}));"
       },
-      "id": "4e1ef45c-ff3d-42de-ba22-82e19d23c427",
+      "id": "c3011ef2-f295-43c7-92d5-52a8622873cc",
       "name": "Process - Split Chunks",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        208,
-        64
+        -240,
+        128
       ]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "http://host.docker.internal:9621/documents/text",
+        "url": "http://host.docker.internal:9625/documents/text",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
@@ -59,16 +145,16 @@
         "bodyParameters": {
           "parameters": [
             {
-              "name": "file_path",
-              "value": "={{ $json.file_path }}"
+              "name": "filepath",
+              "value": "$json.filepath"
             },
             {
               "name": "text",
-              "value": "={{ $json.text }}"
+              "value": "$json.text"
             },
             {
               "name": "metadata",
-              "value": "={{ $json.metadata }}"
+              "value": "$json.metadata"
             }
           ]
         },
@@ -76,142 +162,411 @@
           "timeout": 30000
         }
       },
-      "id": "5eac8ee2-8414-4933-bcaa-aa4b85c6e5c0",
+      "id": "d6d42676-4965-4c3d-910e-9eca6cd57c73",
       "name": "Integrate - LightRAG Upload",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        432,
-        -32
+        0,
+        0
       ],
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
       "credentials": {
         "httpHeaderAuth": {
-          "id": "TWS5mNx6qmEGlxLk",
-          "name": "LightRAG Header Auth"
+          "id": "nyJU8pItFXca6WAQ",
+          "name": "Header Auth - LightRAG 9625"
         }
-      }
+      },
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "operation": "executeQuery",
-        "query": "INSERT INTO eda_logs (log_id, tool_name, verilog_files, total_lines, error_count, warning_count, timing_violations, chunk_count, status, created_at)\nVALUES (\n  '{{ $('Process - Extract Metadata').first().json.log_id }}',\n  '{{ $('Process - Extract Metadata').first().json.tool_name }}',\n  ARRAY[{{ $('Process - Extract Metadata').first().json.verilog_files.map(f => `'${f}'`).join(',') }}]::TEXT[],\n  {{ $('Process - EDA Log Parser').first().json.total_lines }},\n  {{ $('Process - EDA Log Parser').first().json.error_count }},\n  {{ $('Process - EDA Log Parser').first().json.warning_count }},\n  {{ $('Process - EDA Log Parser').first().json.timing_violations }},\n  {{ $('Process - EDA Log Parser').first().json.chunks.length }},\n  'indexed',\n  NOW()\n)\nON CONFLICT (log_id) DO UPDATE SET\n  status = 'indexed',\n  chunk_count = EXCLUDED.chunk_count;",
+        "jsCode": "const uploadItems = $input.all();\nconst firstMeta = $('Process - Split Chunks').first().json;\nlet successCount = 0;\nlet duplicateCount = 0;\nlet failedCount = 0;\nconst uploads = uploadItems.map((item, index) => {\n  const j = item.json || {};\n  const rawStatus = j.status || j.data?.status || j.result?.status || 'unknown';\n  const status = String(rawStatus).toLowerCase();\n  const ok = status === 'success' || status === 'duplicated' || status === 'duplicate' || status === 'already_exists';\n  if (status === 'success') successCount++;\n  else if (status === 'duplicated' || status === 'duplicate' || status === 'already_exists') duplicateCount++;\n  else failedCount++;\n  return {\n    index: index + 1,\n    filepath: firstMeta.filepath,\n    status: rawStatus,\n    message: j.message || j.error || j.detail || null,\n    trackid: j.trackid || j.data?.trackid || null,\n    ok,\n    raw: j\n  };\n});\nreturn [{\n  json: {\n    requestid: firstMeta.requestid,\n    sessionid: firstMeta.sessionid,\n    fileid: firstMeta.fileid,\n    mode: firstMeta.mode,\n    stage: firstMeta.stage,\n    timestamp: firstMeta.timestamp,\n    ingestversion: firstMeta.ingestversion,\n    startms: firstMeta.startms,\n    logid: firstMeta.logid,\n    toolname: firstMeta.toolname,\n    verilogfiles: firstMeta.verilogfiles,\n    parsertotallines: firstMeta.parsertotallines,\n    parsererrorcount: firstMeta.parsererrorcount,\n    parserwarningcount: firstMeta.parserwarningcount,\n    parsertimingviolations: firstMeta.parsertimingviolations,\n    parserchunkcount: firstMeta.parserchunkcount,\n    uploadok: failedCount === 0 && uploads.length > 0,\n    uploadtotal: uploads.length,\n    uploadsuccesscount: successCount,\n    uploadduplicatecount: duplicateCount,\n    uploadfailedcount: failedCount,\n    uploads\n  }\n}];"
+      },
+      "id": "94d05b07-56e2-4cad-849b-c84adbdda2bb",
+      "name": "Process - Normalize Upload Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "ingestv2-cond-upload-ok",
+              "leftValue": "={{$json.uploadok}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
         "options": {}
       },
-      "id": "3c77eef5-1a6b-4f80-a8d9-e6fbf3a1e89b",
-      "name": "Integrate - Postgres Write Session",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.5,
+      "id": "bc2e1677-dca1-4689-96af-ad4d5aebf0dc",
+      "name": "Logic - Upload OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
       "position": [
-        432,
-        160
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const meta = $('Process - Extract Metadata').first().json;\nconst parser = $('Process - EDA Log Parser').first().json;\nconst upload = $('Process - Normalize Upload Result').first().json;\nconst chunks = parser.chunks || [];\nconst issueTypeLabel = {\n  VIOLATION: 'Timing Violation',\n  MULTIDRIVEN: 'Multi-Driven Net',\n  LATCHINFERRED: 'Latch Inferred'\n};\nfunction findChunk(predicate) {\n  return chunks.find(predicate);\n}\nconst topChunk = chunks[0] || null;\nconst wnsChunk = findChunk(c => c.metadata?.timingwns !== undefined);\nconst tnsChunk = findChunk(c => c.metadata?.timingtns !== undefined);\nconst locationChunk = findChunk(c => c.metadata?.file && c.metadata?.fileline);\nconst issueChunk = findChunk(c => c.metadata?.issuetype === 'VIOLATION') || findChunk(c => c.metadata?.issuetype === 'MULTIDRIVEN') || findChunk(c => c.metadata?.issuetype === 'LATCHINFERRED');\nconst primaryIssueType = issueTypeLabel[issueChunk?.metadata?.issuetype] || 'General';\nconst primaryLocation = locationChunk ? `${locationChunk.metadata.file}:${locationChunk.metadata.fileline}` : (topChunk?.metadata?.net || 'NA');\nconst topSeverity = topChunk?.metadata?.severity || 'INFO';\nconst evidence = chunks.slice(0, 10).map((c, index) => ({\n  evidenceid: `ingestev-${index + 1}`,\n  sourcetype: 'parsedlogline',\n  label: issueTypeLabel[c.metadata?.issuetype] || `${c.metadata?.severity} Log Evidence`,\n  severity: c.metadata?.severity || 'INFO',\n  location: c.metadata?.file ? `${c.metadata.file}:${c.metadata.fileline}` : (c.metadata?.net || 'NA'),\n  message: c.text,\n  score: c.priority || 0,\n  metadata: {\n    issuetype: c.metadata?.issuetype || null,\n    module: c.metadata?.module || null,\n    net: c.metadata?.net || null,\n    timingwns: c.metadata?.timingwns ?? null,\n    timingtns: c.metadata?.timingtns ?? null,\n    linenum: c.metadata?.linenum ?? null\n  }\n}));\nreturn [{\n  json: {\n    requestid: meta.requestid,\n    sessionid: meta.sessionid,\n    fileid: meta.fileid,\n    mode: meta.mode,\n    stage: meta.stage,\n    timestamp: meta.timestamp,\n    subjectid: meta.logid,\n    summary: {\n      title: 'Log ingested and indexed',\n      rootcause: `Primary parsed issue is ${primaryIssueType}.`,\n      primarylocation: primaryLocation,\n      recommendedfix: 'Use debug workflow for root-cause analysis and fix guidance based on indexed evidence.',\n      severity: topSeverity\n    },\n    details: {\n      logid: meta.logid,\n      toolname: meta.toolname,\n      verilogfiles: meta.verilogfiles,\n      ingestversion: meta.ingestversion,\n      source_type: meta.source_type,\n      file_type: meta.file_type,\n      parsersummary: {\n        primaryissuetype: primaryIssueType,\n        wns: wnsChunk?.metadata?.timingwns ?? null,\n        tns: tnsChunk?.metadata?.timingtns ?? null\n      },\n      uploadsummary: {\n        uploadtotal: upload.uploadtotal,\n        uploadsuccesscount: upload.uploadsuccesscount,\n        uploadduplicatecount: upload.uploadduplicatecount,\n        uploadfailedcount: upload.uploadfailedcount\n      }\n    },\n    evidence,\n    risk: {\n      level: parser.errorcount > 0 ? 'medium' : 'low'\n    },\n    guardrail: {\n      passed: true,\n      warnings: [],\n      blocks: [],\n      recommendedchecks: [\n        'Run cloud debug for diagnosis',\n        'Review top parsed violations',\n        'Confirm timing impact if WNS/TNS is negative'\n      ]\n    },\n    metrics: {\n      latencyms: Date.now() - meta.startms,\n      totallines: parser.totallines,\n      errorcount: parser.errorcount,\n      warningcount: parser.warningcount,\n      timingviolations: parser.timingviolations,\n      chunkcount: chunks.length,\n      uploadtotal: upload.uploadtotal,\n      uploadsuccesscount: upload.uploadsuccesscount,\n      uploadduplicatecount: upload.uploadduplicatecount,\n      uploadfailedcount: upload.uploadfailedcount\n    },\n    raw: {\n      parseroutput: parser,\n      uploadoutput: upload\n    }\n  }\n}];"
+      },
+      "id": "9c035a80-8958-4d3f-a1fd-3faa1fde2846",
+      "name": "Process - Build Phase 1 Ingest Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const meta = $('Process - Extract Metadata').first().json;\nconst parser = $('Process - EDA Log Parser').first().json;\nconst chunks = parser.chunks || [];\nreturn [{\n  json: {\n    requestid: meta.requestid,\n    sessionid: meta.sessionid,\n    fileid: meta.fileid,\n    logid: meta.logid,\n    chunkcount: chunks.length,\n    chunksql: chunks.map((c, index) => {\n      const chunkId = `${meta.logid}-chunk-${index + 1}`;\n      const pointId = `${meta.logid}-p-${index + 1}`;\n      const severity = c.metadata?.severity || 'INFO';\n      const issuetype = c.metadata?.issuetype || '';\n      const priority = Number(c.priority || 0);\n      const metadata = JSON.stringify(c.metadata || {}).replace(/'/g, \"''\");\n      return `INSERT INTO eda_chunks (chunk_id, session_id, logid, file_id, source_type, file_type, qdrant_collection, qdrant_point_id, severity, issuetype, priority, metadata) VALUES ('${chunkId}','${meta.sessionid}','${meta.logid}','${meta.fileid}','eda_log','.log','eda_log_chunks','${pointId}','${severity}','${issuetype}',${priority},'${metadata}'::jsonb) ON CONFLICT (chunk_id) DO UPDATE SET session_id=EXCLUDED.session_id, logid=EXCLUDED.logid, file_id=EXCLUDED.file_id, source_type=EXCLUDED.source_type, file_type=EXCLUDED.file_type, qdrant_collection=EXCLUDED.qdrant_collection, qdrant_point_id=EXCLUDED.qdrant_point_id, severity=EXCLUDED.severity, issuetype=EXCLUDED.issuetype, priority=EXCLUDED.priority, metadata=EXCLUDED.metadata;`;\n    }).join('\\n')\n  }\n}];"
+      },
+      "id": "26bbb1f9-ec01-4c57-b98a-40e54562386d",
+      "name": "Process - Prepare Chunk Registry SQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $('Process - Build Phase 1 Ingest Response').first().json;\nreturn [{\n  json: {\n    success: true,\n    requestid: data.requestid,\n    mode: data.mode,\n    stage: data.stage,\n    subjectid: data.subjectid,\n    sessionid: data.sessionid,\n    fileid: data.fileid,\n    timestamp: data.timestamp,\n    summary: data.summary,\n    details: {\n      ...data.details,\n      databasewrite: {\n        session: true,\n        file_registry: true,\n        chunk_registry: true,\n        audit_log: true\n      }\n    },\n    evidence: data.evidence,\n    risk: data.risk,\n    guardrail: data.guardrail,\n    metrics: data.metrics,\n    raw: data.raw\n  }\n}];"
+      },
+      "id": "65fe92bd-7e3f-4395-880e-d67f8a389c06",
+      "name": "Process - Build Final Ingest Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify($json)}}",
+        "options": {}
+      },
+      "id": "a8105038-5b81-4f71-983b-70ab2897797d",
+      "name": "Send - HTTP Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        2400,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const inputCtx = $('Process - Validate Input').first().json;\nconst current = $input.first().json || {};\nlet error = { code: 'INGESTFAILED', message: 'Ingest pipeline failed before indexing completed.', stage: 'logingestion', retryable: true, httpstatus: 500 };\nif (!inputCtx.inputvalid) {\n  error = {\n    code: inputCtx.validationerrorcode || 'INVALIDINPUT',\n    message: inputCtx.validationerrormessage || 'Invalid input.',\n    stage: 'inputvalidation',\n    retryable: false,\n    httpstatus: 400\n  };\n} else if (current.uploadok === false) {\n  error = {\n    code: 'LIGHTRAGUPLOADFAILED',\n    message: `LightRAG upload failed for ${current.uploadfailedcount || 0} chunks.`,\n    stage: 'lightragupload',\n    retryable: true,\n    httpstatus: 503\n  };\n}\nreturn [{\n  json: {\n    success: false,\n    requestid: inputCtx.requestid,\n    mode: inputCtx.mode,\n    stage: inputCtx.stage,\n    subjectid: inputCtx.logid,\n    sessionid: inputCtx.sessionid,\n    fileid: inputCtx.fileid,\n    timestamp: inputCtx.timestamp,\n    error,\n    summary: null,\n    details: {\n      logid: inputCtx.logid,\n      toolname: inputCtx.toolname,\n      ingestversion: inputCtx.ingestversion\n    },\n    evidence: [],\n    risk: { level: 'low' },\n    guardrail: {\n      passed: true,\n      warnings: [],\n      blocks: [],\n      recommendedchecks: [\n        'Verify input payload',\n        'Check LightRAG service health',\n        'Retry ingest after dependency recovery'\n      ]\n    },\n    metrics: {\n      latencyms: Date.now() - inputCtx.startms\n    },\n    raw: current\n  }\n}];"
+      },
+      "id": "25a3f169-e2f0-423a-a265-3fdb317fbf76",
+      "name": "Process - Build Error Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "steventseng.ai@gmail.com",
+        "subject": "=AgenticEDAIngest {{$(\"Process - Build Error Response\").first().json.error.code}} log {{$(\"Process - Build Error Response\").first().json.subjectid}}",
+        "message": "=Ingest workflow failed.\nRequest ID: {{$(\"Process - Build Error Response\").first().json.requestid}}\nSession ID: {{$(\"Process - Build Error Response\").first().json.sessionid}}\nFile ID: {{$(\"Process - Build Error Response\").first().json.fileid}}\nSubject ID: {{$(\"Process - Build Error Response\").first().json.subjectid}}\nStage: {{$(\"Process - Build Error Response\").first().json.error.stage}}\nCode: {{$(\"Process - Build Error Response\").first().json.error.code}}\nMessage: {{$(\"Process - Build Error Response\").first().json.error.message}}\nTimestamp: {{$(\"Process - Build Error Response\").first().json.timestamp}}\nRetryable: {{$(\"Process - Build Error Response\").first().json.error.retryable}}",
+        "options": {}
+      },
+      "id": "ea5a9c0c-1921-4075-b6af-b1399a32f6d2",
+      "name": "Send - Ingest Error Email Alert",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1200,
+        320
       ],
+      "webhookId": "ingest-v2-error-email-001",
       "credentials": {
-        "postgres": {
-          "id": "7YFhFLTJatRgagVN",
-          "name": "Postgres account"
+        "gmailOAuth2": {
+          "id": "9GFaGUCU94PzP4mp",
+          "name": "Gmail account"
         }
       }
     },
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={\n  \"success\": true,\n  \"log_id\": \"{{ $('Process - Extract Metadata').first().json.log_id }}\",\n  \"chunks_indexed\": {{ $('Process - EDA Log Parser').first().json.chunks.length }},\n  \"error_count\": {{ $('Process - EDA Log Parser').first().json.error_count }},\n  \"warning_count\": {{ $('Process - EDA Log Parser').first().json.warning_count }},\n  \"timing_violations\": {{ $('Process - EDA Log Parser').first().json.timing_violations }},\n  \"message\": \"EDA log indexed successfully via Hybrid Parser\"\n}",
+        "responseBody": "={{JSON.stringify($json)}}",
         "options": {}
       },
-      "id": "3a59c6af-5bf4-49e2-9870-ebc6f0fe59ee",
-      "name": "Send - HTTP Response",
+      "id": "9e90deee-98d5-4ac6-8f4b-017d75e6bc47",
+      "name": "Send - Ingest Error Response",
       "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
+      "typeVersion": 1.5,
       "position": [
-        656,
-        -32
+        1664,
+        320
       ]
     },
     {
       "parameters": {
-        "httpMethod": "POST",
-        "path": "ingest-log",
-        "responseMode": "responseNode",
+        "content": "### 測試：Log Ingest v2\n\n{\n  \"requestid\": \"req-ingest-v2-001\",\n  \"logid\": \"testlog001\",\n  \"toolname\": \"OpenROAD\",\n  \"verilogfiles\": [\"rtltopmodule.v\", \"rtlalu.v\", \"rtlclkdiv.v\"],\n  \"logcontent\": \"INFO Starting synthesis run\\nlatch inferred in module alu_core\\nsetup violation detected WNS -0.182 TNS -1.430 file alu_core.v 128 net net_alu_result module alu_core\\nmulti-driven net net_clk_buf detected in module topmodule\\nWARNING timing violation fail file topmodule.v 244 net net_data_out module topmodule\\nINFO Run completed with violations\",\n  \"context\": \"phase2 ingest smoke test\"\n}",
+        "height": 288,
+        "width": 544
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        368,
+        864
+      ],
+      "typeVersion": 1,
+      "id": "b10bff27-9c5f-47d0-a539-f2858110f4b4",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "VALUES (\n  '{{$(\"Process - Build Error Response\").first().json.requestid}}',\n  '0422-AgenticEDA - Log Ingest Pipeline v2',\n  '{{$(\"Process - Build Error Response\").first().json.error.stage}}',\n  'ERROR',\n  '{{$(\"Process - Build Error Response\").first().json.error.code}}',\n  {{$(\"Process - Build Error Response\").first().json.error.retryable ? 'TRUE' : 'FALSE'}},\n  {{$(\"Process - Build Error Response\").first().json.metrics.latencyms || 0}},\n  '{{$(\"Process - Build Error Response\").first().json ? JSON.stringify({\n    subjectid: $(\"Process - Build Error Response\").first().json.subjectid,\n    sessionid: $(\"Process - Build Error Response\").first().json.sessionid,\n    fileid: $(\"Process - Build Error Response\").first().json.fileid,\n    message: $(\"Process - Build Error Response\").first().json.error.message\n  }).replace(/'/g, \"''\") : \"{}\"}}'::jsonb\n);",
         "options": {}
       },
-      "id": "207aeaa7-285c-455e-8db4-6a79c722b4a0",
-      "name": "Trigger - HTTP Ingest",
-      "type": "n8n-nodes-base.webhook",
+      "id": "f7ee19ba-fd88-4c03-af76-c4d002c8094b",
+      "name": "Integrate - Postgres Audit Error0",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        960,
+        320
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "QxVoLtrZIl8A3Id8",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO eda_sessions (\n  session_id, logid, requestid, toolname, source_type, status, ingestversion,\n  topseverity, primaryissuetype, primarylocation, totallines, errorcount,\n  warningcount, timingviolations, chunkcount, metadata\n)\nVALUES (\n  '{{$json.sessionid}}',\n  '{{$json.subjectid}}',\n  '{{$json.requestid}}',\n  '{{$json.details.toolname}}',\n  'eda_log',\n  'indexed',\n  '{{$json.details.ingestversion}}',\n  '{{$json.summary.severity}}',\n  '{{$json.details.parsersummary.primaryissuetype}}',\n  '{{$json.summary.primarylocation}}',\n  {{$json.metrics.totallines || 0}},\n  {{$json.metrics.errorcount || 0}},\n  {{$json.metrics.warningcount || 0}},\n  {{$json.metrics.timingviolations || 0}},\n  {{$json.metrics.chunkcount || 0}},\n  '{{ JSON.stringify({ verilogfiles: $json.details.verilogfiles, uploadsummary: $json.details.uploadsummary }) }}'::jsonb\n)\nON CONFLICT (logid)\nDO UPDATE SET\n  requestid = EXCLUDED.requestid,\n  toolname = EXCLUDED.toolname,\n  source_type = EXCLUDED.source_type,\n  status = EXCLUDED.status,\n  ingestversion = EXCLUDED.ingestversion,\n  topseverity = EXCLUDED.topseverity,\n  primaryissuetype = EXCLUDED.primaryissuetype,\n  primarylocation = EXCLUDED.primarylocation,\n  totallines = EXCLUDED.totallines,\n  errorcount = EXCLUDED.errorcount,\n  warningcount = EXCLUDED.warningcount,\n  timingviolations = EXCLUDED.timingviolations,\n  chunkcount = EXCLUDED.chunkcount,\n  metadata = EXCLUDED.metadata,\n  updatedat = NOW();",
+        "options": {}
+      },
+      "id": "334d7b54-4826-468f-9475-3a96373c1621",
+      "name": "Integrate - Postgres Write Session0",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        960,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "QxVoLtrZIl8A3Id8",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO eda_files (\n  file_id, session_id, logid, file_name, file_type, source_type, toolname, content_hash, storage_uri, metadata\n)\nVALUES (\n  '{{$(\"Process - Build Phase 1 Ingest Response\").first().json.fileid}}',\n  '{{$(\"Process - Build Phase 1 Ingest Response\").first().json.sessionid}}',\n  '{{$(\"Process - Build Phase 1 Ingest Response\").first().json.subjectid}}',\n  '{{$(\"Process - Build Phase 1 Ingest Response\").first().json.subjectid}}.log',\n  '.log',\n  'eda_log',\n  '{{$(\"Process - Build Phase 1 Ingest Response\").first().json.details.toolname}}',\n  md5('{{$(\"Process - Build Phase 1 Ingest Response\").first().json.subjectid}}-{{$(\"Process - Build Phase 1 Ingest Response\").first().json.requestid}}'),\n  'lightrag://{{$(\"Process - Build Phase 1 Ingest Response\").first().json.subjectid}}.log',\n  '{{ JSON.stringify({\n    verilogfiles: $(\"Process - Build Phase 1 Ingest Response\").first().json.details.verilogfiles || [],\n    ingestversion: $(\"Process - Build Phase 1 Ingest Response\").first().json.details.ingestversion\n  }).replace(/'/g, \"''\") }}'::jsonb\n)\nON CONFLICT (file_id)\nDO UPDATE SET\n  session_id = EXCLUDED.session_id,\n  logid = EXCLUDED.logid,\n  file_name = EXCLUDED.file_name,\n  file_type = EXCLUDED.file_type,\n  source_type = EXCLUDED.source_type,\n  toolname = EXCLUDED.toolname,\n  content_hash = EXCLUDED.content_hash,\n  storage_uri = EXCLUDED.storage_uri,\n  metadata = EXCLUDED.metadata;",
+        "options": {}
+      },
+      "id": "f362adff-cec1-4ae4-8d38-278cefe7b1db",
+      "name": "Integrate - Postgres Write File Registry0",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1184,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "QxVoLtrZIl8A3Id8",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "VALUES (\n  '{{$(\"Process - Build Phase 1 Ingest Response\").first().json.requestid}}',\n  '0422-AgenticEDA - Log Ingest Pipeline v2',\n  '{{$(\"Process - Build Phase 1 Ingest Response\").first().json.stage}}',\n  'SUCCESS',\n  NULL,\n  FALSE,\n  {{$(\"Process - Build Phase 1 Ingest Response\").first().json.metrics.latencyms || 0}},\n  '{{$(\"Process - Build Phase 1 Ingest Response\").first().json ? JSON.stringify({\n    subjectid: $(\"Process - Build Phase 1 Ingest Response\").first().json.subjectid,\n    sessionid: $(\"Process - Build Phase 1 Ingest Response\").first().json.sessionid,\n    fileid: $(\"Process - Build Phase 1 Ingest Response\").first().json.fileid,\n    uploadsummary: $(\"Process - Build Phase 1 Ingest Response\").first().json.details.uploadsummary\n  }).replace(/'/g, \"''\") : \"{}\"}}'::jsonb\n);",
+        "options": {}
+      },
+      "id": "bc3c2891-ddbe-424a-84c6-94d133f612d1",
+      "name": "Integrate - Postgres Audit Success0",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1920,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "QxVoLtrZIl8A3Id8",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "{{$json.chunksql}}",
+        "options": {}
+      },
+      "id": "6273db66-897a-4c74-bce2-27a9409697ea",
+      "name": "Integrate - Postgres Write Chunk Registry0",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1680,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "QxVoLtrZIl8A3Id8",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "### 測試：Input Invalid 1\n\n{\n  \"requestid\": \"req-ingest-invalid-001\",\n  \"logid\": \"testlog-invalid-001\",\n  \"toolname\": \"OpenROAD\",\n  \"verilogfiles\": [\"rtltopmodule.v\", \"rtlalu.v\"],\n  \"context\": \"test invalid path - missing logcontent\"\n}",
+        "height": 208,
+        "width": 544,
+        "color": 3
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        992,
+        864
+      ],
+      "typeVersion": 1,
+      "id": "3a800237-0c1e-45ea-b775-c91bb44da7c2",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "content": "### 測試：Input Invalid 2\n\n{\n  \"requestid\": \"req-ingest-invalid-002\",\n  \"toolname\": \"OpenROAD\",\n  \"verilogfiles\": [\"rtltopmodule.v\", \"rtlalu.v\"],\n  \"logcontent\": \"WARNING timing violation file top.v 10 net net_x module top\",\n  \"context\": \"test invalid path - missing logid\"\n}",
+        "height": 208,
+        "width": 544,
+        "color": 3
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        992,
+        1104
+      ],
+      "typeVersion": 1,
+      "id": "42aeec7c-61b7-45c4-9ddc-1989cde2f0cc",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "content": "### 測試：Upload fail\n\n{\n  \"requestid\": \"req-ingest-uploadfail-001\",\n  \"logid\": \"testlog-uploadfail-001\",\n  \"toolname\": \"OpenROAD\",\n  \"verilogfiles\": [\"rtltopmodule.v\", \"rtlalu.v\", \"rtlclkdiv.v\"],\n  \"logcontent\": \"INFO Starting synthesis run\\nlatch inferred in module alu_core\\nsetup violation detected WNS -0.182 TNS -1.430 file alu_core.v 128 net net_alu_result module alu_core\\nmulti-driven net net_clk_buf detected in module topmodule\\nWARNING timing violation fail file topmodule.v 244 net net_data_out module topmodule\\nINFO Run completed with violations\",\n  \"context\": \"test upload fail path\"\n}",
+        "height": 208,
+        "width": 544,
+        "color": 3
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        992,
+        1360
+      ],
+      "typeVersion": 1,
+      "id": "d2190372-67be-495d-9ae7-03df6d26f356",
+      "name": "Sticky Note3"
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $('Process - Build Error Response').first().json;\n\nreturn [{\n  json: {\n    success: false,\n    requestid: data.requestid,\n    mode: data.mode,\n    stage: data.stage,\n    subjectid: data.subjectid || null,\n    sessionid: data.sessionid || null,\n    fileid: data.fileid || null,\n    timestamp: data.timestamp,\n    error: data.error || {\n      code: 'UNKNOWNERROR',\n      message: 'Unknown error.',\n      stage: data.stage || 'unknown',\n      retryable: false,\n      httpstatus: 500\n    },\n    summary: data.summary || null,\n    details: data.details || {},\n    evidence: data.evidence || [],\n    risk: data.risk || { level: 'low' },\n    guardrail: data.guardrail || {\n      passed: true,\n      warnings: [],\n      blocks: [],\n      recommendedchecks: []\n    },\n    privacy: data.privacy || undefined,\n    metrics: data.metrics || {},\n    raw: data.raw || {}\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -688,
-        64
+        1440,
+        320
       ],
-      "webhookId": "6776714c-4bea-47ba-b623-3385bdb5fc2c"
-    },
-    {
-      "parameters": {
-        "assignments": {
-          "assignments": [
-            {
-              "id": "a547c562-0a9b-4624-bace-0835f9a08a3f",
-              "name": "body",
-              "value": "={{ $json.body }}",
-              "type": "object"
-            }
-          ]
-        },
-        "options": {}
-      },
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
-      "position": [
-        -464,
-        64
-      ],
-      "id": "82b74fa9-1913-41d7-96b0-a54b1f03003a",
-      "name": "Set - Extract Body"
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "CREATE TABLE IF NOT EXISTS eda_logs (\n    log_id TEXT PRIMARY KEY,\n    tool_name TEXT,\n    verilog_files TEXT[],\n    total_lines INTEGER,\n    error_count INTEGER,\n    warning_count INTEGER,\n    timing_violations INTEGER,\n    chunk_count INTEGER,\n    status TEXT,\n    created_at TIMESTAMPTZ DEFAULT NOW()\n);",
-        "options": {}
-      },
-      "id": "828c1032-b43b-4687-82c7-72975c13b9fb",
-      "name": "createPostgresTable",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.5,
-      "position": [
-        432,
-        416
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "7YFhFLTJatRgagVN",
-          "name": "Postgres account"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "SELECT * FROM eda_logs WHERE log_id = 'test_log_001';",
-        "options": {}
-      },
-      "id": "a1e15661-d21a-4980-896f-8fdd8b11a562",
-      "name": "checkPostgresTable",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.5,
-      "position": [
-        672,
-        416
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "7YFhFLTJatRgagVN",
-          "name": "Postgres account"
-        }
-      }
+      "id": "a0b41f29-451e-4150-950c-268d308f943f",
+      "name": "Process - Build Final Error Response"
     }
   ],
   "pinData": {},
   "connections": {
+    "Trigger - HTTP Ingest": {
+      "main": [
+        [
+          {
+            "node": "Process - Extract Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process - Extract Body": {
+      "main": [
+        [
+          {
+            "node": "Process - Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process - Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Logic - Input Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Logic - Input Valid?": {
+      "main": [
+        [
+          {
+            "node": "Process - Extract Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Process - Build Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Process - Extract Metadata": {
       "main": [
         [
@@ -238,11 +593,6 @@
       "main": [
         [
           {
-            "node": "Integrate - Postgres Write Session",
-            "type": "main",
-            "index": 0
-          },
-          {
             "node": "Integrate - LightRAG Upload",
             "type": "main",
             "index": 0
@@ -254,6 +604,68 @@
       "main": [
         [
           {
+            "node": "Process - Normalize Upload Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process - Normalize Upload Result": {
+      "main": [
+        [
+          {
+            "node": "Logic - Upload OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Logic - Upload OK?": {
+      "main": [
+        [
+          {
+            "node": "Process - Build Phase 1 Ingest Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Process - Build Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process - Build Phase 1 Ingest Response": {
+      "main": [
+        [
+          {
+            "node": "Integrate - Postgres Write Session0",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process - Prepare Chunk Registry SQL": {
+      "main": [
+        [
+          {
+            "node": "Integrate - Postgres Write Chunk Registry0",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process - Build Final Ingest Response": {
+      "main": [
+        [
+          {
             "node": "Send - HTTP Response",
             "type": "main",
             "index": 0
@@ -261,22 +673,88 @@
         ]
       ]
     },
-    "Trigger - HTTP Ingest": {
+    "Process - Build Error Response": {
       "main": [
         [
           {
-            "node": "Set - Extract Body",
+            "node": "Integrate - Postgres Audit Error0",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Set - Extract Body": {
+    "Send - Ingest Error Email Alert": {
       "main": [
         [
           {
-            "node": "Process - Extract Metadata",
+            "node": "Process - Build Final Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Integrate - Postgres Audit Error0": {
+      "main": [
+        [
+          {
+            "node": "Send - Ingest Error Email Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Integrate - Postgres Write Session0": {
+      "main": [
+        [
+          {
+            "node": "Integrate - Postgres Write File Registry0",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Integrate - Postgres Write File Registry0": {
+      "main": [
+        [
+          {
+            "node": "Process - Prepare Chunk Registry SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Integrate - Postgres Write Chunk Registry0": {
+      "main": [
+        [
+          {
+            "node": "Integrate - Postgres Audit Success0",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Integrate - Postgres Audit Success0": {
+      "main": [
+        [
+          {
+            "node": "Process - Build Final Ingest Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process - Build Final Error Response": {
+      "main": [
+        [
+          {
+            "node": "Send - Ingest Error Response",
             "type": "main",
             "index": 0
           }
@@ -287,14 +765,12 @@
   "active": false,
   "settings": {
     "executionOrder": "v1",
-    "binaryMode": "separate",
-    "availableInMCP": false
+    "binaryMode": "separate"
   },
-  "versionId": "633b9151-dd50-4952-bc6d-6b0a49038e58",
+  "versionId": "75a42bd5-323a-4ce5-8c8e-8224e8bb6acf",
   "meta": {
-    "templateCredsSetupCompleted": true,
-    "instanceId": "90d91903cda88668c7676c1294819f369b1250dbf93d6adfa6ddce44aa1d6638"
+    "instanceId": "d5ef0d0e5582913a3ef5d407553e79af26cb91f094474e4052aefc0d92253e3f"
   },
-  "id": "F6HWRtkSW0koioFt",
+  "id": "AyJR5zJrH2wRGDZP",
   "tags": []
 }
